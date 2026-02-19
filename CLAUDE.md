@@ -32,7 +32,7 @@ rsync -avz celeste:~/code/md-learning/sim-monitor/ ~/code/sim-monitor/
 
 **dashboard.py** — Flask app with a single-page inline HTML template (no separate files). Routes: `/` (dashboard), `/api/status` (JSON), `/api/stop` (POST, kills sim via `pkill`), `/api/restart` (POST, launches sim script on celeste), `/api/quit` (POST, terminates the app), `/api/refresh` (POST). Dashboard auto-refreshes every 30s via JS `setInterval`. Global `_latest_data` is updated by the poller thread.
 
-**config.yaml** — Defines simulations (name, remote directory, script name, log file, target_ns). Simulations can be marked `status: completed` to skip polling. Optional `launch_cmd` per simulation overrides the default restart command (`cd {directory} && nohup python {script} > /dev/null 2>&1 &`).
+**config.yaml** — Defines simulations (name, remote directory, script name, log file, target_ns). Simulations can be marked `status: completed` to skip polling. Optional `launch_cmd` per simulation overrides the default restart command (`cd ~/code/md-learning && nohup conda run -n md-env python {script} > /dev/null 2>&1 &`). Script paths in config are relative to `~/code/md-learning/`.
 
 ## Menu Bar Title Length
 

@@ -369,7 +369,7 @@ def api_restart():
         return jsonify({'error': 'No directory/script configured'}), 400
 
     launch_cmd = sim.get('launch_cmd',
-        f"cd {directory} && nohup python {script} > /dev/null 2>&1 &")
+        f"cd ~/code/md-learning && nohup conda run -n md-env python {script} > /dev/null 2>&1 &")
 
     from poller import ssh_run
     result = ssh_run(_host, launch_cmd)
