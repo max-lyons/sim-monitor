@@ -2,11 +2,11 @@
 """
 Simulation Monitor — macOS Menu Bar App
 ========================================
-Uses rumps for the menu bar, Flask for the dashboard.
-Click "Open Dashboard" to see full charts in a browser window.
+Uses rumps for the menu bar, Flask + NSPopover for the dashboard.
+Click the menu bar icon to see the dashboard in a native popover.
 
 Usage:
-    pip install rumps flask plotly pyyaml
+    pip install rumps flask plotly pyyaml pyobjc-framework-WebKit
     python monitor.py
 """
 
@@ -14,7 +14,6 @@ import os
 import sys
 import threading
 import queue
-import webbrowser
 import logging
 
 import rumps
@@ -26,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from poller import poll_all
 from dashboard import app as flask_app, init_dashboard, update_data
+from popover import setup_popover
 
 
 def load_config():
@@ -45,27 +45,13 @@ class SimMonitorApp(rumps.App):
         self._update_queue = queue.Queue()
         self._poll_count = 0
         self._polling = False
+        self._popover_ready = False
 
         super().__init__(
             name="SimMonitor",
             title="MD",
             quit_button=None,
         )
-
-        # Menu items
-        self.sim_items = []
-        for sim in self.simulations:
-            item = rumps.MenuItem(f"  {sim['name']}: ...")
-            self.sim_items.append(item)
-
-        self.menu = [
-            rumps.MenuItem("Open Dashboard", callback=self.open_dashboard),
-            None,
-            *self.sim_items,
-            None,
-            rumps.MenuItem("Refresh Now", callback=self.do_refresh),
-            rumps.MenuItem("Quit", callback=rumps.quit_application),
-        ]
 
         # Start Flask in background
         init_dashboard(self.host, self.simulations)
@@ -82,6 +68,14 @@ class SimMonitorApp(rumps.App):
     @rumps.timer(2)
     def check_updates(self, _):
         """Runs on the MAIN thread every 2s — safe to update UI here."""
+        # One-time popover setup after rumps initializes the status bar
+        if not self._popover_ready:
+            try:
+                setup_popover(self._nsapp.nsstatusitem, self.port)
+                self._popover_ready = True
+            except AttributeError:
+                pass
+
         try:
             data = self._update_queue.get_nowait()
             self._apply_data(data)
@@ -124,26 +118,6 @@ class SimMonitorApp(rumps.App):
                 self.title = "done"
             else:
                 self.title = "idle"
-
-        # Update menu items
-        for i, sim_data in enumerate(data['simulations']):
-            if i >= len(self.sim_items):
-                break
-            s = sim_data
-            if s.get('status') == 'running':
-                eta = f" ETA {s['eta_human']}" if s.get('eta_human') else ""
-                self.sim_items[i].title = f"  {s['name']}: {s['current_ns']}/{s['target_ns']} ns ({s['percent']:.0f}%){eta}"
-            elif s.get('status') == 'completed':
-                self.sim_items[i].title = f"  {s['name']}: done ({s['target_ns']} ns)"
-            else:
-                self.sim_items[i].title = f"  {s['name']}: {s.get('status', '?')}"
-
-    def open_dashboard(self, _):
-        webbrowser.open(f'http://localhost:{self.port}')
-
-    def do_refresh(self, _):
-        self.title = "..."
-        threading.Thread(target=self._do_poll, daemon=True).start()
 
 
 if __name__ == '__main__':

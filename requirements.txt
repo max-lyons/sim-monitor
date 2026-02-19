@@ -2,3 +2,4 @@ rumps
 flask
 plotly
 pyyaml
+pyobjc-framework-WebKit

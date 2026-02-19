@@ -37,10 +37,10 @@ DASHBOARD_HTML = """
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         background: #0d1117; color: #c9d1d9; padding: 20px; }
+         background: #0d1117; color: #c9d1d9; padding: 16px; width: 100%; overflow-x: hidden; overflow-y: auto; }
   h1 { color: #58a6ff; margin-bottom: 20px; font-size: 24px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px; margin-bottom: 20px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 16px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; overflow: hidden; }
   .card h2 { font-size: 16px; color: #58a6ff; margin-bottom: 12px; }
   .card h3 { font-size: 14px; color: #8b949e; margin-bottom: 8px; }
 
@@ -64,19 +64,22 @@ DASHBOARD_HTML = """
 
   .gpu-bar { background: #21262d; border-radius: 4px; height: 16px; margin: 4px 0; }
   .gpu-fill { height: 100%; border-radius: 4px; background: #da3633; transition: width 0.5s; }
-  .gpu-row { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; }
+  .gpu-row { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; overflow: hidden; }
 
   .plot-container { margin-top: 12px; }
 
   .log-box { background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
              padding: 8px; font-family: 'SF Mono', 'Menlo', monospace; font-size: 11px;
-             max-height: 200px; overflow-y: auto; line-height: 1.6; color: #8b949e; }
+             max-height: 150px; overflow-y: auto; overflow-x: hidden; word-break: break-all;
+             line-height: 1.6; color: #8b949e; }
 
   .btn { padding: 6px 16px; border-radius: 6px; border: 1px solid #30363d;
          background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 13px; }
   .btn:hover { background: #30363d; }
   .btn-danger { border-color: #da3633; color: #f85149; }
   .btn-danger:hover { background: #da3633; color: #fff; }
+  .btn-quit { border-color: #da3633; color: #f85149; display: none; }
+  .btn-quit:hover { background: #da3633; color: #fff; }
 
   .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   .last-update { color: #8b949e; font-size: 12px; }
@@ -86,10 +89,11 @@ DASHBOARD_HTML = """
 <body>
 
 <div class="header">
-  <h1>Simulation Monitor</h1>
+  <h1>MD Simulation Monitor</h1>
   <div class="controls">
     <span class="last-update" id="lastUpdate"></span>
     <button class="btn" onclick="refresh()">Refresh</button>
+    <button class="btn btn-quit" id="quitBtn" onclick="quitApp()">Stop Monitor</button>
   </div>
 </div>
 
@@ -202,7 +206,7 @@ function renderPlots(sims) {
     card.className = 'card';
     card.style.gridColumn = '1 / -1';
     card.innerHTML = `<h2>${s.name} — Time Series</h2>
-      <div class="plot-container" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div class="plot-container" style="display:grid;grid-template-columns:1fr;gap:8px;">
         <div id="plot-energy-${s.name.replace(/\\W/g,'')}"></div>
         <div id="plot-temp-${s.name.replace(/\\W/g,'')}"></div>
         <div id="plot-density-${s.name.replace(/\\W/g,'')}"></div>
@@ -282,6 +286,19 @@ async function stopSim(idx) {
   } catch (e) { alert('Error: ' + e.message); }
 }
 
+// Show quit button if loaded in popover
+const isPopover = new URLSearchParams(window.location.search).has('popover');
+if (isPopover) {
+  document.getElementById('quitBtn').style.display = 'inline-block';
+}
+
+async function quitApp() {
+  if (!confirm('Stop Simulation Monitor?')) return;
+  try {
+    await fetch('/api/quit', { method: 'POST' });
+  } catch (e) { /* app is terminating */ }
+}
+
 // Initial load + auto-refresh
 refresh();
 setInterval(refresh, 30000);
@@ -325,6 +342,17 @@ def api_stop():
     # Find and kill the process
     result = ssh_run(_host, f"pkill -f 'python.*{script_name}'")
     return jsonify({'ok': True, 'result': result})
+
+
+@app.route('/api/quit', methods=['POST'])
+def api_quit():
+    """Quit the application."""
+    from AppKit import NSApplication
+    ns_app = NSApplication.sharedApplication()
+    ns_app.performSelectorOnMainThread_withObject_waitUntilDone_(
+        'terminate:', None, False
+    )
+    return jsonify({'ok': True})
 
 
 @app.route('/api/refresh', methods=['POST'])
