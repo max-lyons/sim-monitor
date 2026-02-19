@@ -121,6 +121,18 @@ class SimMonitorApp(rumps.App):
 
 
 if __name__ == '__main__':
+    import socket
     config = load_config()
+    port = config.get('dashboard_port', 5050)
+
+    # Prevent duplicate instances — check if port is already in use
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(('127.0.0.1', port))
+        sock.close()
+    except OSError:
+        print(f"SimMonitor already running (port {port} in use)")
+        sys.exit(0)
+
     app = SimMonitorApp(config)
     app.run()

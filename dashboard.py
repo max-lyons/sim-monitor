@@ -379,8 +379,8 @@ def api_restart():
 @app.route('/api/quit', methods=['POST'])
 def api_quit():
     """Quit the application."""
-    import signal, os, threading
-    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
+    import os, threading
+    threading.Timer(0.5, lambda: os._exit(0)).start()
     return jsonify({'ok': True})
 
 
