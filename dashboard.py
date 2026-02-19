@@ -93,7 +93,7 @@ DASHBOARD_HTML = """
   <div class="controls">
     <span class="last-update" id="lastUpdate"></span>
     <button class="btn" onclick="refresh()">Refresh</button>
-    <button class="btn btn-quit" id="quitBtn" onclick="quitApp()">Stop Monitor</button>
+    <button class="btn btn-quit" id="quitBtn" onclick="quitApp()">Quit</button>
   </div>
 </div>
 
@@ -302,7 +302,7 @@ if (isPopover) {
 }
 
 async function quitApp() {
-  if (!confirm('Stop Simulation Monitor?')) return;
+  if (!confirm('Quit Simulation Monitor?')) return;
   try {
     await fetch('/api/quit', { method: 'POST' });
   } catch (e) { /* app is terminating */ }
@@ -379,11 +379,8 @@ def api_restart():
 @app.route('/api/quit', methods=['POST'])
 def api_quit():
     """Quit the application."""
-    from AppKit import NSApplication
-    ns_app = NSApplication.sharedApplication()
-    ns_app.performSelectorOnMainThread_withObject_waitUntilDone_(
-        'terminate:', None, False
-    )
+    import signal, os, threading
+    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
     return jsonify({'ok': True})
 
 
