@@ -279,30 +279,29 @@ async function refresh() {
   }
 }
 
-async function stopSim(idx) {
-  if (!confirm('Stop this simulation?')) return;
-  try {
-    await fetch('/api/stop', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({index: idx}) });
-    setTimeout(refresh, 2000);
-  } catch (e) { alert('Error: ' + e.message); }
-}
-
-async function restartSim(idx) {
-  if (!confirm('Restart this simulation?')) return;
-  try {
-    await fetch('/api/restart', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({index: idx}) });
-    setTimeout(refresh, 5000);
-  } catch (e) { alert('Error: ' + e.message); }
-}
-
-// Show quit button if loaded in popover
+// Popover detection — WKWebView doesn't support confirm()/alert()
 const isPopover = new URLSearchParams(window.location.search).has('popover');
 if (isPopover) {
   document.getElementById('quitBtn').style.display = 'inline-block';
 }
 
+async function stopSim(idx) {
+  if (!isPopover && !confirm('Stop this simulation?')) return;
+  try {
+    await fetch('/api/stop', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({index: idx}) });
+    setTimeout(refresh, 2000);
+  } catch (e) { if (!isPopover) alert('Error: ' + e.message); }
+}
+
+async function restartSim(idx) {
+  if (!isPopover && !confirm('Restart this simulation?')) return;
+  try {
+    await fetch('/api/restart', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({index: idx}) });
+    setTimeout(refresh, 5000);
+  } catch (e) { if (!isPopover) alert('Error: ' + e.message); }
+}
+
 async function quitApp() {
-  if (!confirm('Quit Simulation Monitor?')) return;
   try {
     await fetch('/api/quit', { method: 'POST' });
   } catch (e) { /* app is terminating */ }
