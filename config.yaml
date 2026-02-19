@@ -1,0 +1,24 @@
+host: celeste
+poll_interval: 30  # seconds
+dashboard_port: 5050
+
+simulations:
+  - name: Tet5-VC + Substrate
+    directory: ~/code/md-learning/simulations/tet5vc
+    script: scripts/16_tet5vc_md.py
+    log: production.log
+    target_ns: 500
+
+  - name: HATR-5 + Substrate
+    directory: ~/code/md-learning/simulations/hatr5_substrate
+    script: scripts/14_hatr5_substrate_md.py
+    log: production.log
+    target_ns: 222
+    status: completed
+
+  - name: HATR-5 Apo
+    directory: ~/code/md-learning/simulations/hatr5
+    script: scripts/11_hatr5_md.py
+    log: production.log
+    target_ns: 200
+    status: completed
