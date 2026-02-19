@@ -380,7 +380,7 @@ def api_restart():
 def api_quit():
     """Quit the application."""
     import signal, os, threading
-    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
     return jsonify({'ok': True})
 
 
