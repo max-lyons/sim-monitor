@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A macOS menu bar app that monitors molecular dynamics (MD) simulations running on a remote Linux host (`celeste`) via SSH polling. Uses **rumps** for the menu bar icon and **Flask** for a Plotly web dashboard at `localhost:5050`.
+A macOS menu bar app that monitors molecular dynamics (MD) simulations running on a remote Linux host (`celeste`) via SSH polling. Uses **rumps** for the menu bar icon, **NSPopover + WKWebView** for a native dropdown dashboard, and **Flask** for the dashboard backend at `localhost:5050`.
 
 ## Running
 
@@ -13,7 +13,7 @@ source ~/sim-monitor-env/bin/activate
 python monitor.py
 ```
 
-The venv is at `~/sim-monitor-env` (Python 3.12, Homebrew). All deps are in `requirements.txt` (rumps, flask, plotly, pyyaml).
+The venv is at `~/sim-monitor-env` (Python 3.12, Homebrew). All deps are in `requirements.txt` (rumps, flask, plotly, pyyaml, pyobjc-framework-WebKit).
 
 ## Syncing from Remote
 
@@ -28,9 +28,11 @@ rsync -avz celeste:~/code/md-learning/sim-monitor/ ~/code/sim-monitor/
 
 **poller.py** — `poll_all()` SSHs into `celeste` via `subprocess.run(['ssh', ...])`. For each simulation it runs a single compound SSH command (separated by `===MARKER===` lines) that grabs the log tail, history, process status. `poll_gpu()` runs `nvidia-smi`. Parses CSV-format `production.log` files (step, time_ps, energies, temperature, volume, density, speed).
 
-**dashboard.py** — Flask app with a single-page inline HTML template (no separate files). Routes: `/` (dashboard), `/api/status` (JSON), `/api/stop` (POST, kills sim via `pkill`), `/api/refresh` (POST). Dashboard auto-refreshes every 30s via JS `setInterval`. Global `_latest_data` is updated by the poller thread.
+**popover.py** — Native macOS popover using PyObjC. `WebViewController(NSViewController)` hosts a WKWebView loading the Flask dashboard. `PopoverClickHandler(NSObject)` toggles the popover on status bar button click. `setup_popover()` wires everything up after rumps initializes.
 
-**config.yaml** — Defines simulations (name, remote directory, script name, log file, target_ns). Simulations can be marked `status: completed` to skip polling.
+**dashboard.py** — Flask app with a single-page inline HTML template (no separate files). Routes: `/` (dashboard), `/api/status` (JSON), `/api/stop` (POST, kills sim via `pkill`), `/api/restart` (POST, launches sim script on celeste), `/api/quit` (POST, terminates the app), `/api/refresh` (POST). Dashboard auto-refreshes every 30s via JS `setInterval`. Global `_latest_data` is updated by the poller thread.
+
+**config.yaml** — Defines simulations (name, remote directory, script name, log file, target_ns). Simulations can be marked `status: completed` to skip polling. Optional `launch_cmd` per simulation overrides the default restart command (`cd {directory} && nohup python {script} > /dev/null 2>&1 &`).
 
 ## Menu Bar Title Length
 

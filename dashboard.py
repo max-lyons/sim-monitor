@@ -159,6 +159,7 @@ function renderSimCards(sims) {
         </div>
       </div>
       ${s.status === 'running' ? `<div style="margin-top:12px;text-align:right"><button class="btn btn-danger" onclick="stopSim(${i})">Stop</button></div>` : ''}
+      ${s.status === 'stopped' ? `<div style="margin-top:12px;text-align:right"><button class="btn" style="border-color:#3fb950;color:#3fb950" onclick="restartSim(${i})">Restart</button></div>` : ''}
     </div>
   `).join('');
 }
@@ -286,6 +287,14 @@ async function stopSim(idx) {
   } catch (e) { alert('Error: ' + e.message); }
 }
 
+async function restartSim(idx) {
+  if (!confirm('Restart this simulation?')) return;
+  try {
+    await fetch('/api/restart', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({index: idx}) });
+    setTimeout(refresh, 5000);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
 // Show quit button if loaded in popover
 const isPopover = new URLSearchParams(window.location.search).has('popover');
 if (isPopover) {
@@ -341,6 +350,29 @@ def api_stop():
     from poller import ssh_run
     # Find and kill the process
     result = ssh_run(_host, f"pkill -f 'python.*{script_name}'")
+    return jsonify({'ok': True, 'result': result})
+
+
+@app.route('/api/restart', methods=['POST'])
+def api_restart():
+    """Restart a stopped simulation."""
+    global _host, _simulations
+    data = request.get_json()
+    idx = data.get('index', -1)
+    if idx < 0 or idx >= len(_simulations):
+        return jsonify({'error': 'Invalid index'}), 400
+
+    sim = _simulations[idx]
+    directory = sim.get('directory', '')
+    script = sim.get('script', '')
+    if not directory or not script:
+        return jsonify({'error': 'No directory/script configured'}), 400
+
+    launch_cmd = sim.get('launch_cmd',
+        f"cd {directory} && nohup python {script} > /dev/null 2>&1 &")
+
+    from poller import ssh_run
+    result = ssh_run(_host, launch_cmd)
     return jsonify({'ok': True, 'result': result})
 
 
