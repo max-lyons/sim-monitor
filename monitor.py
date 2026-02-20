@@ -122,6 +122,9 @@ class SimMonitorApp(rumps.App):
 
 if __name__ == '__main__':
     import socket
+    from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
     config = load_config()
     port = config.get('dashboard_port', 5050)
 
