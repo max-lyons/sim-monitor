@@ -12,6 +12,11 @@ import time
 from datetime import datetime, timedelta
 
 
+# Cache of last successful poll result per simulation name.
+# Used to preserve "completed" state when SSH becomes unreachable.
+_last_known = {}
+
+
 def ssh_run(host, command, timeout=15):
     """Run a command on the remote host via SSH."""
     try:
@@ -120,6 +125,13 @@ def poll_simulation(host, sim_config):
         f.write(f"output: {repr(output[:500]) if output else 'None'}\n")
 
     if output is None:
+        cached = _last_known.get(name)
+        if cached:
+            # Preserve last known data — progress can only go forward.
+            # Keep completed status as-is; mark others as unreachable.
+            if cached.get('status') != 'completed':
+                cached = dict(cached, status='unreachable', error='SSH connection failed')
+            return cached
         return {
             'name': name,
             'status': 'unreachable',
@@ -194,7 +206,7 @@ def poll_simulation(host, sim_config):
     else:
         status = 'stopped'
 
-    return {
+    result = {
         'name': name,
         'status': status,
         'current_ns': round(current_ns, 1),
@@ -211,6 +223,11 @@ def poll_simulation(host, sim_config):
         'log_tail': log_tail,
         'process_running': process_running,
     }
+
+    # Cache every successful poll so data survives SSH outages
+    _last_known[name] = result
+
+    return result
 
 
 def poll_gpu(host):
