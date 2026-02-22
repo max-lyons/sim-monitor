@@ -193,7 +193,7 @@ function renderPlots(sims) {
     paper_bgcolor: '#161b22', plot_bgcolor: '#0d1117',
     font: { color: '#8b949e', size: 11 },
     margin: { l: 50, r: 20, t: 30, b: 40 },
-    xaxis: { gridcolor: '#21262d', title: 'Time (ns)' },
+    xaxis: { gridcolor: '#21262d', title: 'Time (ns)', rangemode: 'tozero' },
     yaxis: { gridcolor: '#21262d' },
     legend: { bgcolor: 'rgba(0,0,0,0)', font: { size: 10 } },
     height: 250,
@@ -216,25 +216,26 @@ function renderPlots(sims) {
     container.appendChild(card);
 
     const id = s.name.replace(/\\W/g, '');
+    const simLayout = { ...plotLayout, xaxis: { ...plotLayout.xaxis, range: [0, s.target_ns] } };
     Plotly.newPlot('plot-energy-' + id, [
       { x: t, y: s.log_data.map(d => d.total_energy), type: 'scatter', mode: 'lines',
         line: { color: '#58a6ff', width: 1 }, name: 'Total Energy' },
-    ], { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: 'kJ/mol' }, title: { text: 'Total Energy', font: { size: 13 } } }, { responsive: true });
+    ], { ...simLayout, yaxis: { ...plotLayout.yaxis, title: 'kJ/mol' }, title: { text: 'Total Energy', font: { size: 13 } } }, { responsive: true });
 
     Plotly.newPlot('plot-temp-' + id, [
       { x: t, y: s.log_data.map(d => d.temperature), type: 'scatter', mode: 'lines',
         line: { color: '#f85149', width: 1 }, name: 'Temperature' },
-    ], { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: 'K' }, title: { text: 'Temperature', font: { size: 13 } } }, { responsive: true });
+    ], { ...simLayout, yaxis: { ...plotLayout.yaxis, title: 'K' }, title: { text: 'Temperature', font: { size: 13 } } }, { responsive: true });
 
     Plotly.newPlot('plot-density-' + id, [
       { x: t, y: s.log_data.map(d => d.density), type: 'scatter', mode: 'lines',
         line: { color: '#3fb950', width: 1 }, name: 'Density' },
-    ], { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: 'g/mL' }, title: { text: 'Density', font: { size: 13 } } }, { responsive: true });
+    ], { ...simLayout, yaxis: { ...plotLayout.yaxis, title: 'g/mL' }, title: { text: 'Density', font: { size: 13 } } }, { responsive: true });
 
     Plotly.newPlot('plot-speed-' + id, [
       { x: t, y: s.log_data.map(d => d.speed_ns_day), type: 'scatter', mode: 'lines',
         line: { color: '#d29922', width: 1 }, name: 'Speed' },
-    ], { ...plotLayout, yaxis: { ...plotLayout.yaxis, title: 'ns/day' }, title: { text: 'Speed', font: { size: 13 } } }, { responsive: true });
+    ], { ...simLayout, yaxis: { ...plotLayout.yaxis, title: 'ns/day' }, title: { text: 'Speed', font: { size: 13 } } }, { responsive: true });
   });
 }
 
