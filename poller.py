@@ -108,7 +108,7 @@ def poll_simulation(host, sim_config):
         f"echo '===TAIL==='",
         f"tail -1 {log_path} 2>/dev/null || echo 'NO_LOG'",
         f"echo '===HISTORY==='",
-        f"tail -500 {log_path} 2>/dev/null || echo 'NO_LOG'",
+        f"cat {log_path} 2>/dev/null || echo 'NO_LOG'",
         f"echo '===PROCESS==='",
         f"pgrep -af '{script_name}' 2>/dev/null || echo 'NOT_RUNNING'",
         f"echo '===LOGTAIL==='",
