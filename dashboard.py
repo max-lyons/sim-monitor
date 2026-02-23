@@ -26,6 +26,12 @@ def update_data(data):
     _latest_data = data
 
 
+def update_simulations(simulations):
+    """Update the simulations list (called when auto-detected sims are found)."""
+    global _simulations
+    _simulations = simulations
+
+
 DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -49,6 +55,7 @@ DASHBOARD_HTML = """
   .status-completed { background: #0c2d6b; color: #58a6ff; border: 1px solid #1f6feb; }
   .status-stopped { background: #3d1d00; color: #d29922; border: 1px solid #9e6a03; }
   .status-unreachable { background: #3d0000; color: #f85149; border: 1px solid #da3633; }
+  .auto-badge { font-size: 10px; color: #8b949e; font-weight: 400; margin-left: 6px; }
 
   .progress-bar { background: #21262d; border-radius: 4px; height: 24px; margin: 8px 0; position: relative; overflow: hidden; }
   .progress-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
@@ -78,6 +85,7 @@ DASHBOARD_HTML = """
   .btn:hover { background: #30363d; }
   .btn-danger { border-color: #da3633; color: #f85149; }
   .btn-danger:hover { background: #da3633; color: #fff; }
+  .btn:disabled { opacity: 0.5; cursor: wait; }
   .btn-quit { border-color: #da3633; color: #f85149; display: none; }
   .btn-quit:hover { background: #da3633; color: #fff; }
 
@@ -123,7 +131,7 @@ function renderSimCards(sims) {
   container.innerHTML = sims.map((s, i) => `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <h2>${s.name}</h2>
+        <h2>${s.name}${s._auto_detected ? '<span class="auto-badge">(auto)</span>' : ''}</h2>
         <span class="status-badge ${statusClass(s.status)}">${s.status}</span>
       </div>
       <div class="progress-bar">
@@ -158,8 +166,8 @@ function renderSimCards(sims) {
           <div class="stat-label">Total E (kJ/mol)</div>
         </div>
       </div>
-      ${s.status === 'running' ? `<div style="margin-top:12px;text-align:right"><button class="btn btn-danger" onclick="stopSim(${i})">Stop</button></div>` : ''}
-      ${s.status === 'stopped' ? `<div style="margin-top:12px;text-align:right"><button class="btn" style="border-color:#3fb950;color:#3fb950" onclick="restartSim(${i})">Restart</button></div>` : ''}
+      ${s.status === 'running' ? `<div style="margin-top:12px;text-align:right"><button class="btn btn-danger" onclick="stopSim('${s.name.replace(/'/g,"\\'")}')">Stop</button></div>` : ''}
+      ${s.status === 'stopped' ? `<div style="margin-top:12px;text-align:right"><button class="btn" style="border-color:#3fb950;color:#3fb950" onclick="restartSim('${s.name.replace(/'/g,"\\'")}')">Restart</button></div>` : ''}
     </div>
   `).join('');
 }
@@ -257,11 +265,26 @@ function renderLogSelect(sims) {
   const sel = document.getElementById('logSelect');
   const prev = sel.value;
   sel.innerHTML = sims.map((s, i) => `<option value="${i}">${s.name}</option>`).join('');
-  if (prev) sel.value = prev;
+  if (prev !== '') { sel.value = prev; }
+  else {
+    const runIdx = sims.findIndex(s => s.status === 'running');
+    if (runIdx >= 0) sel.value = runIdx;
+  }
 }
 
 function render(d) {
   data = d;
+  // Sort: running first, then stopped, then completed — within each group, auto-detected (recent) before manual
+  d.simulations.sort((a, b) => {
+    const order = { running: 0, stopped: 1, completed: 2, unreachable: 3, error: 4 };
+    const aOrd = order[a.status] ?? 5;
+    const bOrd = order[b.status] ?? 5;
+    if (aOrd !== bOrd) return aOrd - bOrd;
+    // Auto-detected (recently active) sims sort above manual/old ones
+    const aAuto = a._auto_detected ? 0 : 1;
+    const bAuto = b._auto_detected ? 0 : 1;
+    return aAuto - bAuto;
+  });
   document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date(d.timestamp).toLocaleTimeString();
   renderSimCards(d.simulations);
   renderGPU(d.gpu);
@@ -286,20 +309,26 @@ if (isPopover) {
   document.getElementById('quitBtn').style.display = 'inline-block';
 }
 
-async function stopSim(idx) {
+async function stopSim(name) {
   if (!isPopover && !confirm('Stop this simulation?')) return;
+  const btn = event.target;
+  btn.textContent = 'Stopping...';
+  btn.disabled = true;
   try {
-    await fetch('/api/stop', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({index: idx}) });
-    setTimeout(refresh, 2000);
-  } catch (e) { if (!isPopover) alert('Error: ' + e.message); }
+    await fetch('/api/stop', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: name}) });
+    setTimeout(async () => { await fetch('/api/refresh', {method:'POST'}); setTimeout(refresh, 3000); }, 2000);
+  } catch (e) { btn.textContent = 'Error'; if (!isPopover) alert('Error: ' + e.message); }
 }
 
-async function restartSim(idx) {
+async function restartSim(name) {
   if (!isPopover && !confirm('Restart this simulation?')) return;
+  const btn = event.target;
+  btn.textContent = 'Starting...';
+  btn.disabled = true;
   try {
-    await fetch('/api/restart', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({index: idx}) });
-    setTimeout(refresh, 5000);
-  } catch (e) { if (!isPopover) alert('Error: ' + e.message); }
+    await fetch('/api/restart', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: name}) });
+    setTimeout(async () => { await fetch('/api/refresh', {method:'POST'}); setTimeout(refresh, 5000); }, 3000);
+  } catch (e) { btn.textContent = 'Error'; if (!isPopover) alert('Error: ' + e.message); }
 }
 
 async function quitApp() {
@@ -334,22 +363,33 @@ def api_status():
     return jsonify(_latest_data)
 
 
+def _find_sim_by_name(name):
+    """Look up a simulation config by name."""
+    for s in (_simulations or []):
+        if s.get('name') == name:
+            return s
+    return None
+
+
 @app.route('/api/stop', methods=['POST'])
 def api_stop():
     global _host, _simulations
     data = request.get_json()
-    idx = data.get('index', -1)
-    if idx < 0 or idx >= len(_simulations):
-        return jsonify({'error': 'Invalid index'}), 400
-
-    sim = _simulations[idx]
-    script_name = sim.get('script', '')
-    if not script_name:
-        return jsonify({'error': 'No script configured'}), 400
+    name = data.get('name', '')
+    sim = _find_sim_by_name(name)
+    if not sim:
+        return jsonify({'error': f'Simulation not found: {name}'}), 400
+    directory = sim.get('directory', '')
+    if not directory:
+        return jsonify({'error': 'No directory configured'}), 400
 
     from poller import ssh_run
-    # Find and kill the process
-    result = ssh_run(_host, f"pkill -f 'python.*{script_name}'")
+    # Kill python processes whose cwd matches the sim directory + kill process group
+    result = ssh_run(_host,
+        f"for pid in $(pgrep '[p]ython' 2>/dev/null); do "
+        f"cwd=$(readlink /proc/$pid/cwd 2>/dev/null); "
+        f"[ \"$cwd\" = \"{directory}\" ] && kill -- -$(ps -o pgid= -p $pid | tr -d ' ') 2>/dev/null; "
+        f"kill $pid 2>/dev/null; done")
     return jsonify({'ok': True, 'result': result})
 
 
@@ -358,21 +398,23 @@ def api_restart():
     """Restart a stopped simulation."""
     global _host, _simulations
     data = request.get_json()
-    idx = data.get('index', -1)
-    if idx < 0 or idx >= len(_simulations):
-        return jsonify({'error': 'Invalid index'}), 400
-
-    sim = _simulations[idx]
+    name = data.get('name', '')
+    sim = _find_sim_by_name(name)
+    if not sim:
+        return jsonify({'error': f'Simulation not found: {name}'}), 400
     directory = sim.get('directory', '')
     script = sim.get('script', '')
-    if not directory or not script:
-        return jsonify({'error': 'No directory/script configured'}), 400
-
-    launch_cmd = sim.get('launch_cmd',
-        f"cd ~/code/md-learning && nohup conda run -n md-env python {script} > /dev/null 2>&1 &")
+    launch_cmd = sim.get('launch_cmd', '')
+    if not launch_cmd:
+        if script:
+            launch_cmd = f"cd ~/code/md-learning && nohup conda run -n md-env python {script} > /dev/null 2>&1 &"
+        else:
+            return jsonify({'error': 'No launch command available — stop and restart manually'}), 400
 
     from poller import ssh_run
-    result = ssh_run(_host, launch_cmd)
+    # Source conda init for non-interactive SSH, then run the launch command
+    conda_init = "source /home/max/miniforge3/etc/profile.d/conda.sh && conda activate md-env && "
+    result = ssh_run(_host, conda_init + launch_cmd)
     return jsonify({'ok': True, 'result': result})
 
 

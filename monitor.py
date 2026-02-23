@@ -24,7 +24,7 @@ logging.getLogger('werkzeug').setLevel(logging.ERROR)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from poller import poll_all
-from dashboard import app as flask_app, init_dashboard, update_data
+from dashboard import app as flask_app, init_dashboard, update_data, update_simulations
 from popover import setup_popover
 
 
@@ -95,6 +95,23 @@ class SimMonitorApp(rumps.App):
             data = poll_all(self.host, self.simulations)
             self.latest_data = data
             update_data(data)
+            # Sync simulations list so dashboard stop/restart works for auto-detected sims
+            if data.get('simulations'):
+                sim_configs = []
+                for s in data['simulations']:
+                    cfg = {
+                        'name': s.get('name', ''),
+                        'directory': s.get('_directory', ''),
+                        'script': s.get('_script', ''),
+                        'log': 'production.log',
+                        'target_ns': s.get('target_ns', 500),
+                    }
+                    if s.get('status') == 'completed':
+                        cfg['status'] = 'completed'
+                    if s.get('_launch_cmd'):
+                        cfg['launch_cmd'] = s['_launch_cmd']
+                    sim_configs.append(cfg)
+                update_simulations(sim_configs)
             self._update_queue.put(data)
         except Exception:
             self._update_queue.put(None)

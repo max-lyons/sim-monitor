@@ -6,6 +6,7 @@ status, log data, process info, and GPU stats in a single SSH call.
 
 import csv
 import io
+import json
 import os
 import subprocess
 import time
@@ -15,6 +16,10 @@ from datetime import datetime, timedelta
 # Cache of last successful poll result per simulation name.
 # Used to preserve "completed" state when SSH becomes unreachable.
 _last_known = {}
+
+# Cache of previously discovered sim configs (keyed by normalized directory).
+# Keeps sims visible after their process stops or log ages past the -mmin window.
+_discovered_cache = {}
 
 
 def ssh_run(host, command, timeout=15):
@@ -104,13 +109,27 @@ def poll_simulation(host, sim_config):
 
     # Build a single SSH command that gathers everything
     # Use markers to separate outputs
+    if script_name and not sim_config.get('_auto_detected'):
+        # Use [c]haracter class trick so pgrep doesn't match its own bash -c command
+        escaped = '[' + script_name[0] + ']' + script_name[1:]
+        process_cmd = f"pgrep -af '{escaped}' 2>/dev/null || echo 'NOT_RUNNING'"
+    else:
+        # For auto-detected sims, find python processes whose cwd matches the sim directory
+        process_cmd = (
+            f"found=0; for pid in $(pgrep '[p]ython' 2>/dev/null); do "
+            f"cwd=$(readlink /proc/$pid/cwd 2>/dev/null); "
+            f"if [ \"$cwd\" = \"{directory}\" ]; then "
+            f"cmd=$(tr '\\0' ' ' < /proc/$pid/cmdline 2>/dev/null); "
+            f"echo \"$pid $cmd\"; found=1; fi; done; "
+            f"[ $found -eq 0 ] && echo 'NOT_RUNNING'"
+        )
     commands = [
         f"echo '===TAIL==='",
         f"tail -1 {log_path} 2>/dev/null || echo 'NO_LOG'",
         f"echo '===HISTORY==='",
         f"cat {log_path} 2>/dev/null || echo 'NO_LOG'",
         f"echo '===PROCESS==='",
-        f"pgrep -af '{script_name}' 2>/dev/null || echo 'NOT_RUNNING'",
+        process_cmd,
         f"echo '===LOGTAIL==='",
         f"tail -30 {log_path} 2>/dev/null || echo 'NO_LOG'",
     ]
@@ -177,9 +196,21 @@ def poll_simulation(host, sim_config):
     history_text = sections.get('HISTORY', '')
     log_data = parse_log_lines(history_text) if history_text != 'NO_LOG' else []
 
-    # Check process
+    # Check process and capture cmdline for restart
     process_text = sections.get('PROCESS', '')
     process_running = process_text.strip() != 'NOT_RUNNING' and process_text.strip() != ''
+    # Try to extract launch command from running process
+    process_launch_cmd = ''
+    if process_running and not script_name:
+        for pline in process_text.strip().split('\n'):
+            pline = pline.strip()
+            if not pline or pline == 'NOT_RUNNING':
+                continue
+            # Format: "PID cmdline..."
+            pparts = pline.split(None, 1)
+            if len(pparts) >= 2 and pparts[0].isdigit():
+                process_launch_cmd = f"cd {directory} && nohup conda run --no-capture-output -n md-env {pparts[1]} > /dev/null 2>&1 &"
+                break
 
     # Log tail for display
     log_tail_text = sections.get('LOGTAIL', '')
@@ -188,20 +219,26 @@ def poll_simulation(host, sim_config):
         log_tail = [l for l in log_tail_text.split('\n') if l.strip()]
 
     # Calculate progress and ETA
+    # Subtract equilibration time — first log entry marks the start of production
+    first_ns = log_data[0]['time_ns'] if log_data else 0
+    for entry in log_data:
+        entry['time_ns'] -= first_ns
     current_ns = last_entry['time_ns'] if last_entry else 0
-    percent = min(100.0, (current_ns / target_ns) * 100) if target_ns > 0 else 0
+    production_ns = current_ns - first_ns
+    percent = min(100.0, (production_ns / target_ns) * 100) if target_ns > 0 else 0
     speed = last_entry['speed_ns_day'] if last_entry else None
 
     eta = None
-    if speed and speed > 0 and current_ns < target_ns:
-        remaining_ns = target_ns - current_ns
+    if speed and speed > 0 and production_ns < target_ns:
+        remaining_ns = target_ns - production_ns
         remaining_days = remaining_ns / speed
         eta = datetime.now() + timedelta(days=remaining_days)
 
-    # Determine status — use speed > 0 as a fallback indicator that the sim is running
-    if percent >= 100:
+    # Determine status based on progress and process detection
+    # Use 99.5% threshold to handle floating point accumulation from timestep rounding
+    if production_ns >= target_ns * 0.995:
         status = 'completed'
-    elif process_running or (speed and speed > 0):
+    elif process_running:
         status = 'running'
     else:
         status = 'stopped'
@@ -209,7 +246,7 @@ def poll_simulation(host, sim_config):
     result = {
         'name': name,
         'status': status,
-        'current_ns': round(current_ns, 1),
+        'current_ns': round(production_ns, 1),
         'target_ns': target_ns,
         'percent': round(percent, 1),
         'eta': eta.isoformat() if eta else None,
@@ -222,12 +259,179 @@ def poll_simulation(host, sim_config):
         'log_data': log_data,
         'log_tail': log_tail,
         'process_running': process_running,
+        '_directory': directory,
+        '_script': script_name,
+        '_launch_cmd': sim_config.get('launch_cmd', '') or process_launch_cmd,
     }
 
     # Cache every successful poll so data survives SSH outages
     _last_known[name] = result
 
     return result
+
+
+def discover_simulations(host):
+    """Auto-detect simulations via GPU process scanning and active log files."""
+    command = (
+        "echo '===GPU===' ; "
+        "nvidia-smi pmon -c 1 -s u 2>/dev/null | awk '/python/ {print $2}' | "
+        "while read pid; do "
+        "cwd=$(readlink /proc/$pid/cwd 2>/dev/null) ; "
+        "cmd=$(tr '\\0' ' ' < /proc/$pid/cmdline 2>/dev/null) ; "
+        "[ -n \"$cwd\" ] && echo \"$pid:$cwd:$cmd\" ; "
+        "done ; "
+        "echo '===RECENT===' ; "
+        "find ~/code/md-learning/simulations ~/code/md/simulations "
+        "-maxdepth 2 -name 'production.log' -type f -mmin -60 2>/dev/null ; "
+        "echo '===META===' ; "
+        "find ~/code/md-learning/simulations ~/code/md/simulations "
+        "-maxdepth 2 -name 'sim_meta.json' -type f 2>/dev/null | "
+        "while read f; do echo \"$f:\"; cat \"$f\"; done"
+    )
+    output = ssh_run(host, command, timeout=20)
+    if output is None:
+        return []
+
+    # Parse sections
+    sections = {}
+    current_section = None
+    current_lines = []
+    for line in output.split('\n'):
+        if line.startswith('===') and line.endswith('==='):
+            if current_section:
+                sections[current_section] = current_lines
+            current_section = line.strip('=')
+            current_lines = []
+        else:
+            if line.strip():
+                current_lines.append(line.strip())
+    if current_section:
+        sections[current_section] = current_lines
+
+    discovered = {}
+
+    # Parse GPU process results — each line is pid:cwd:cmdline
+    for line in sections.get('GPU', []):
+        parts = line.split(':', 2)
+        if len(parts) < 2:
+            continue
+        cwd = parts[1].rstrip('/')
+        cmdline = parts[2].strip() if len(parts) > 2 else ''
+        # Only add if it's under a simulations directory
+        if '/simulations/' not in cwd:
+            continue
+        # Build launch command from the captured cmdline, wrapping in conda env
+        launch_cmd = ''
+        if cmdline:
+            # cmdline is the raw process args (e.g. "python scripts/foo.py")
+            # Wrap in conda run to ensure correct environment
+            launch_cmd = f"cd {cwd} && nohup conda run --no-capture-output -n md-env {cmdline} > /dev/null 2>&1 &"
+        if cwd in discovered:
+            # Update existing entry with launch_cmd if we got one from GPU
+            if launch_cmd:
+                discovered[cwd]['launch_cmd'] = launch_cmd
+            continue
+        name = os.path.basename(cwd)
+        entry = {
+            'name': name,
+            'directory': cwd,
+            'log': 'production.log',
+            'target_ns': 500,
+            'script': '',
+            '_auto_detected': True,
+        }
+        if launch_cmd:
+            entry['launch_cmd'] = launch_cmd
+        discovered[cwd] = entry
+
+    # Parse recently-modified logs (last 60 min) — catches active sims
+    for log_path in sections.get('RECENT', []):
+        sim_dir = os.path.dirname(log_path)
+        norm_dir = sim_dir.rstrip('/')
+        if norm_dir in discovered:
+            continue
+        name = os.path.basename(sim_dir)
+        discovered[norm_dir] = {
+            'name': name,
+            'directory': sim_dir,
+            'log': 'production.log',
+            'target_ns': 500,
+            'script': '',
+            '_auto_detected': True,
+        }
+
+    # Parse sim_meta.json files to get target_ns
+    meta_by_dir = {}
+    current_meta_path = None
+    meta_text = '\n'.join(sections.get('META', []))
+    for block in meta_text.split('\n'):
+        block = block.strip()
+        if not block:
+            continue
+        if block.endswith(':') and block.startswith('/'):
+            current_meta_path = block[:-1]
+        elif block.startswith('{') and current_meta_path:
+            try:
+                meta = json.loads(block)
+                meta_dir = os.path.dirname(current_meta_path).rstrip('/')
+                meta_by_dir[meta_dir] = meta
+            except (json.JSONDecodeError, ValueError):
+                pass
+            current_meta_path = None
+
+    # Apply target_ns from meta to discovered sims
+    for norm_dir, sim in discovered.items():
+        for meta_dir, meta in meta_by_dir.items():
+            if _normalize_sim_dir(norm_dir) == _normalize_sim_dir(meta_dir):
+                if 'target_ns' in meta:
+                    sim['target_ns'] = meta['target_ns']
+                if 'launch_cmd' in meta:
+                    sim['launch_cmd'] = meta['launch_cmd']
+                if 'script' in meta and not sim.get('script'):
+                    sim['script'] = meta['script']
+                break
+
+    # Update persistent cache with newly discovered sims
+    for norm_dir, sim in discovered.items():
+        _discovered_cache[_normalize_sim_dir(norm_dir)] = sim
+
+    # Include cached sims that weren't found this time (process stopped, log aged out)
+    for cached_key, cached_sim in _discovered_cache.items():
+        norm_dir = cached_sim['directory'].rstrip('/')
+        if norm_dir not in discovered:
+            discovered[norm_dir] = cached_sim
+
+    return list(discovered.values())
+
+
+def _normalize_sim_dir(path):
+    """Normalize a simulation directory path for comparison."""
+    p = path.rstrip('/')
+    # Strip ~/  or /home/<user>/ prefix to get a comparable suffix
+    if p.startswith('~/'):
+        return p[2:]
+    # Match /home/<anything>/ prefix
+    if p.startswith('/home/'):
+        parts = p.split('/', 3)
+        if len(parts) >= 4:
+            return parts[3]
+    # Match /root/ prefix
+    if p.startswith('/root/'):
+        return p[6:]
+    return p
+
+
+def merge_simulations(manual, discovered):
+    """Merge manual config with auto-detected simulations. Manual takes precedence."""
+    manual_suffixes = set()
+    for s in manual:
+        manual_suffixes.add(_normalize_sim_dir(s['directory']))
+
+    merged = list(manual)
+    for d in discovered:
+        if _normalize_sim_dir(d['directory']) not in manual_suffixes:
+            merged.append(d)
+    return merged
 
 
 def poll_gpu(host):
@@ -258,14 +462,25 @@ def poll_all(host, simulations):
         gpu = poll_gpu(host)
     except Exception:
         gpu = {'error': 'GPU poll failed'}
+
+    # Auto-discover simulations and merge with manual config
+    try:
+        discovered = discover_simulations(host)
+    except Exception:
+        discovered = []
+    all_sims = merge_simulations(simulations, discovered)
+
     results = {
         'timestamp': datetime.now().isoformat(),
         'simulations': [],
         'gpu': gpu,
     }
-    for sim in simulations:
+    for sim in all_sims:
         try:
-            results['simulations'].append(poll_simulation(host, sim))
+            sim_result = poll_simulation(host, sim)
+            if sim.get('_auto_detected'):
+                sim_result['_auto_detected'] = True
+            results['simulations'].append(sim_result)
         except Exception as e:
             import traceback
             debug_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'debug.log')
