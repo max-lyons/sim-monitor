@@ -62,6 +62,7 @@ DASHBOARD_HTML = """
   .progress-fill.running { background: linear-gradient(90deg, #238636, #3fb950); }
   .progress-fill.completed { background: linear-gradient(90deg, #1f6feb, #58a6ff); }
   .progress-fill.stopped { background: linear-gradient(90deg, #9e6a03, #d29922); }
+  .progress-fill.unreachable { background: linear-gradient(90deg, #da3633, #f85149); }
   .progress-text { position: absolute; right: 8px; top: 3px; font-size: 12px; font-weight: 600; }
 
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
@@ -100,7 +101,7 @@ DASHBOARD_HTML = """
   <h1>MD Simulation Monitor</h1>
   <div class="controls">
     <span class="last-update" id="lastUpdate"></span>
-    <button class="btn" onclick="refresh()">Refresh</button>
+    <button class="btn" id="refreshBtn" onclick="doRefresh()">Refresh</button>
     <button class="btn btn-quit" id="quitBtn" onclick="quitApp()">Quit</button>
   </div>
 </div>
@@ -134,6 +135,7 @@ function renderSimCards(sims) {
         <h2>${s.name}${s._auto_detected ? '<span class="auto-badge">(auto)</span>' : ''}</h2>
         <span class="status-badge ${statusClass(s.status)}">${s.status}</span>
       </div>
+      ${s.status === 'unreachable' && s.last_update ? `<div style="font-size:11px;color:#f85149;margin-bottom:4px">Last seen: ${new Date(s.last_update).toLocaleTimeString()}</div>` : ''}
       <div class="progress-bar">
         <div class="progress-fill ${s.status}" style="width:${s.percent}%"></div>
         <span class="progress-text">${s.percent}%</span>
@@ -276,7 +278,7 @@ function render(d) {
   data = d;
   // Sort: running first, then stopped, then completed — within each group, auto-detected (recent) before manual
   d.simulations.sort((a, b) => {
-    const order = { running: 0, stopped: 1, completed: 2, unreachable: 3, error: 4 };
+    const order = { running: 0, unreachable: 1, stopped: 2, completed: 3, error: 4 };
     const aOrd = order[a.status] ?? 5;
     const bOrd = order[b.status] ?? 5;
     if (aOrd !== bOrd) return aOrd - bOrd;
@@ -300,6 +302,19 @@ async function refresh() {
     render(d);
   } catch (e) {
     document.getElementById('lastUpdate').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function doRefresh() {
+  const btn = document.getElementById('refreshBtn');
+  btn.textContent = 'Refreshing...';
+  btn.disabled = true;
+  try {
+    await fetch('/api/refresh', { method: 'POST' });
+    setTimeout(async () => { await refresh(); btn.textContent = 'Refresh'; btn.disabled = false; }, 3000);
+  } catch (e) {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.textContent = 'Refresh'; btn.disabled = false; }, 2000);
   }
 }
 

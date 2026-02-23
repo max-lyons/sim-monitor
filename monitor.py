@@ -125,10 +125,16 @@ class SimMonitorApp(rumps.App):
             return
 
         # Update title (keep short — long titles get hidden behind MacBook notch)
+        # Show status of most important sim: running > unreachable > stopped > completed
         running = [s for s in data['simulations'] if s.get('status') == 'running']
+        unreachable = [s for s in data['simulations'] if s.get('status') == 'unreachable']
         if running:
             focus = min(running, key=lambda s: s.get('percent', 0))
             self.title = f"MD {focus.get('percent', 0):.0f}%"
+        elif unreachable:
+            # Show last known progress with indicator
+            focus = min(unreachable, key=lambda s: s.get('percent', 0))
+            self.title = f"MD ?"
         else:
             completed = [s for s in data['simulations'] if s.get('status') == 'completed']
             if len(completed) == len(data['simulations']):

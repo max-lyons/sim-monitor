@@ -290,7 +290,8 @@ def discover_simulations(host):
     )
     output = ssh_run(host, command, timeout=20)
     if output is None:
-        return []
+        # SSH failed — return cached discoveries so sims don't disappear
+        return list(_discovered_cache.values())
 
     # Parse sections
     sections = {}
